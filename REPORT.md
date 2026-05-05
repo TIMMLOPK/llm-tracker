@@ -96,7 +96,7 @@ The stop word list for Jaccard similarity was tuned to prevent false positives f
 | Transcription | Cloudflare Whisper Large v3 Turbo | Zero local RAM, handles 82-min videos |
 | Scheduling | Cron jobs at 17:00 and 20:00 UTC | Full pipeline: discover → transcribe → enrich → serve |
 | Dashboard | Static HTML + vanilla JS + D3.js | Word cloud, force-directed topic graph, filters |
-| Backend | Python `http.server` on port 8080 | Serves `data.json` to frontend |
+| Backend | Python `http.server` on port 8080 | Serves `data/data.json` to frontend |
 
 ---
 
@@ -288,17 +288,23 @@ The live dashboard at https://track.ionce.me provides:
 
 ```
 ~/llm-tracker/
-├── fetch_and_analyze.py    # Main pipeline: discover, transcribe, enrich
-├── serve.py                # HTTP server (port 8080)
-├── index.html              # Dashboard UI (D3 word cloud, topic graph, filters)
-├── graph.html              # Legacy standalone graph (now embedded)
-├── data.json               # All video data + enrichments + segments (~16MB)
-├── channels.json           # 12 channel configurations
-├── Caddyfile               # HTTPS reverse proxy config
-├── start.sh                # Restart helper script
-├── README.md               # Project documentation
-├── REPORT.md               # This report
-└── subs/                   # Cached SRT subtitle files
+├── fetch_and_analyze.py       # Main pipeline: discover, transcribe, enrich
+├── embed_topics.py            # Topic embedding generation (Qwen3-Embedding)
+├── start.sh                   # Server restart helper script
+├── topics.json                # 562 specific subtopics extracted by agent
+├── topic_embeddings.json      # Pre-computed 1024-dim embeddings (~9.8MB)
+├── data/
+│   ├── data.json              # All video data + enrichments + segments (~12MB)
+│   └── channels.json          # 12 channel configurations
+├── web/
+│   ├── serve.py               # HTTP server (port 8080)
+│   ├── index.html             # Dashboard UI (D3 word cloud, topic graph, filters)
+│   ├── graph.html             # Legacy standalone graph (now embedded)
+│   └── Caddyfile              # HTTPS reverse proxy config
+├── images/
+│   └── screenshot.png         # Dashboard screenshot for README
+├── README.md                  # Project documentation
+└── REPORT.md                  # This report
 ```
 
 ## Appendix B: Cron Schedule

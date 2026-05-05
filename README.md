@@ -43,7 +43,7 @@ cp .env.example .env
 python3 fetch_and_analyze.py
 
 # Start the web dashboard
-python3 serve.py 8080
+python3 web/serve.py 8080
 
 # Open in browser
 open http://localhost:8080
@@ -55,8 +55,8 @@ For HTTPS with auto-renewing certificates, use Caddy:
 
 ```bash
 # Install Caddy, then:
-# Edit Caddyfile to set your domain
-caddy run
+# Edit web/Caddyfile to set your domain
+caddy run --config web/Caddyfile
 ```
 
 Use `start.sh` to restart the server:
@@ -84,16 +84,16 @@ Use `start.sh` to restart the server:
 | File | Purpose |
 |------|---------|
 | `fetch_and_analyze.py` | Main pipeline: discover videos, transcribe, keyword-based topic extraction |
-| `serve.py` | HTTP server serving the dashboard on port 8080 |
-| `index.html` | Self-contained dashboard UI (D3.js word cloud, topic graph, filters, transcript viewer) |
-| `graph.html` | Legacy standalone topic graph (now embedded in index.html) |
 | `embed_topics.py` | Generates topic embeddings using Qwen3-Embedding-0.6B for semantic similarity matching |
-| `data.json` | All video data, enrichments, and transcripts (~12MB, auto-updated, 122 videos) |
-| `channels.json` | 12 channel configurations with IDs and focus areas |
+| `start.sh` | Server restart helper |
+| `web/serve.py` | HTTP server serving the dashboard on port 8080 |
+| `web/index.html` | Self-contained dashboard UI (D3.js word cloud, topic graph, filters, transcript viewer) |
+| `web/graph.html` | Legacy standalone topic graph (now embedded in index.html) |
+| `web/Caddyfile` | Caddy reverse proxy config for HTTPS |
+| `data/data.json` | All video data, enrichments, and transcripts (~12MB, auto-updated, 122 videos) |
+| `data/channels.json` | 12 channel configurations with IDs and focus areas |
 | `topics.json` | 562 specific subtopics extracted by the Hermes agent |
 | `topic_embeddings.json` | Pre-computed 1024-dim embeddings for semantic topic similarity |
-| `Caddyfile` | Caddy reverse proxy config for HTTPS |
-| `start.sh` | Server restart helper |
 
 ## Topic Categories
 
@@ -112,11 +112,11 @@ Cron runs the full pipeline twice daily:
 | 17:00 | Discover new videos → transcribe → keyword extract → Hermes agent enrich → rebuild connections → restart server |
 | 20:00 | Same as above |
 
-The web server serves the latest `data.json` automatically.
+The web server serves the latest `data/data.json` automatically.
 
 ## Adding Channels
 
-Edit `channels.json` to add new channels:
+Edit `data/channels.json` to add new channels:
 
 ```json
 {
@@ -157,3 +157,22 @@ python3 embed_topics.py
 ```
 
 The pipeline embeds all 562 subtopics with Qwen3-Embedding-0.6B (1024 dimensions) and stores the vectors in `topic_embeddings.json`. The dashboard uses cosine similarity on these vectors to power cross-channel topic connection discovery.
+
+## Project Structure
+
+```
+llm-tracker/
+├── fetch_and_analyze.py       # Main pipeline
+├── embed_topics.py            # Topic embedding generation
+├── start.sh                   # Server restart script
+├── data/
+│   ├── data.json              # All video data + enrichments (~12MB)
+│   └── channels.json          # 12 channel configurations
+├── web/
+│   ├── serve.py               # HTTP dashboard server
+│   ├── index.html             # Dashboard UI
+│   ├── graph.html             # Legacy topic graph
+│   └── Caddyfile              # HTTPS config
+└── images/
+    └── screenshot.png
+```
