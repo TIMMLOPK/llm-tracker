@@ -1,0 +1,98 @@
+[
+  {
+    "name": "Andrej Karpathy",
+    "channel_id": "UCXUPKJO5MZQN11PqgIvyuvQ",
+    "handle": "@AndrejKarpathy",
+    "focus": "Deep dives on LLM internals, training, tokenization, neural net fundamentals",
+    "url": "https://www.youtube.com/channel/UCXUPKJO5MZQN11PqgIvyuvQ",
+    "id": "UCXUPKJO5MZQN11PqgIvyuvQ"
+  },
+  {
+    "name": "3Blue1Brown",
+    "channel_id": "UCYO_jab_esuFRV4b17AJtAw",
+    "handle": "@3blue1brown",
+    "focus": "Visual math explanations of transformers, attention, neural networks",
+    "url": "https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw",
+    "id": "UCYO_jab_esuFRV4b17AJtAw"
+  },
+  {
+    "name": "Two Minute Papers",
+    "channel_id": "UCbfYPyITQ-7l4upoX8nvctg",
+    "handle": "@TwoMinutePapers",
+    "focus": "AI/ML paper summaries, image/video generation, LLM breakthroughs",
+    "url": "https://www.youtube.com/channel/UCbfYPyITQ-7l4upoX8nvctg",
+    "id": "UCbfYPyITQ-7l4upoX8nvctg"
+  },
+  {
+    "name": "Yannic Kilcher",
+    "channel_id": "UCZHmQk67mSJgfCCTn7xBfew",
+    "handle": "@YannicKilcher",
+    "focus": "ML paper deep dives, LLM architecture, alignment, industry analysis",
+    "url": "https://www.youtube.com/channel/UCZHmQk67mSJgfCCTn7xBfew",
+    "id": "UCZHmQk67mSJgfCCTn7xBfew"
+  },
+  {
+    "name": "AI Explained",
+    "channel_id": "UCNJ1Ymd5yFuUPtn21xtRbbw",
+    "handle": "@aiexplained-official",
+    "focus": "LLM capability analysis, benchmark breakdowns, AGI discussions",
+    "url": "https://www.youtube.com/channel/UCNJ1Ymd5yFuUPtn21xtRbbw",
+    "id": "UCNJ1Ymd5yFuUPtn21xtRbbw"
+  },
+  {
+    "name": "Fireship",
+    "channel_id": "UCsBjURrPoezykLs9EqgamOA",
+    "handle": "@Fireship",
+    "focus": "Quick dev-oriented AI/LLM explainers, coding with LLMs, industry news",
+    "url": "https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA",
+    "id": "UCsBjURrPoezykLs9EqgamOA"
+  },
+  {
+    "name": "Sam Witteveen",
+    "channel_id": "UC55ODQSvARtgSyc8ThfiepQ",
+    "handle": "@samwitteveenai",
+    "focus": "LLM agents, production AI systems, model comparisons, tutorials",
+    "url": "https://www.youtube.com/channel/UC55ODQSvARtgSyc8ThfiepQ",
+    "id": "UC55ODQSvARtgSyc8ThfiepQ"
+  },
+  {
+    "name": "The AI Epiphany",
+    "channel_id": "UCj8shE7aIn4Yawwbo2FceCQ",
+    "handle": "@TheAIEpiphany",
+    "focus": "LLM tutorials, RAG, fine-tuning, technical walkthroughs",
+    "url": "https://www.youtube.com/channel/UCj8shE7aIn4Yawwbo2FceCQ",
+    "id": "UCj8shE7aIn4Yawwbo2FceCQ"
+  },
+  {
+    "name": "Wes Roth",
+    "channel_id": "UCqcbQf6yw5KzRoDDcZ_wBSw",
+    "handle": "@WesRoth",
+    "focus": "AI news commentary, LLM industry analysis, OpenAI/Google/Anthropic coverage",
+    "url": "https://www.youtube.com/channel/UCqcbQf6yw5KzRoDDcZ_wBSw",
+    "id": "UCqcbQf6yw5KzRoDDcZ_wBSw"
+  },
+  {
+    "name": "Dave Ebbelaar",
+    "channel_id": "UCn8ujwUInbJkBhffxqAPBVQ",
+    "handle": "@DaveEbbelaar",
+    "focus": "LLM application development, RAG pipelines, LangChain, practical AI engineering",
+    "url": "https://www.youtube.com/channel/UCn8ujwUInbJkBhffxqAPBVQ",
+    "id": "UCn8ujwUInbJkBhffxqAPBVQ"
+  },
+  {
+    "name": "All About AI",
+    "channel_id": "UCR9j1jqqB5Rse69wjUnbYwA",
+    "handle": "@AllAboutAI",
+    "focus": "AI tools, LLM comparisons, workflow automation with AI",
+    "url": "https://www.youtube.com/channel/UCR9j1jqqB5Rse69wjUnbYwA",
+    "id": "UCR9j1jqqB5Rse69wjUnbYwA"
+  },
+  {
+    "name": "1littlecoder",
+    "channel_id": "UCpV_X0VrL8-jg3t6wYGS-1g",
+    "handle": "@1littlecoder",
+    "focus": "Open source LLM tutorials, running models locally, coding demos",
+    "url": "https://www.youtube.com/channel/UCpV_X0VrL8-jg3t6wYGS-1g",
+    "id": "UCpV_X0VrL8-jg3t6wYGS-1g"
+  }
+]

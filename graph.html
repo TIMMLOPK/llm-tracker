@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM YouTube Tracker — Topic Graph</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    overflow: hidden;
+  }
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    background: rgba(13,17,23,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid #21262d;
+    padding: 12px 24px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  #header h1 { font-size: 18px; font-weight: 600; }
+  #header .sep { color: #484f58; }
+  #header a { color: #58a6ff; text-decoration: none; font-size: 14px; }
+  #header a:hover { text-decoration: underline; }
+  #controls {
+    display: flex; align-items: center; gap: 12px; margin-left: auto;
+  }
+  #controls label { font-size: 13px; color: #8b949e; }
+  #controls select, #controls input {
+    background: #161b22; color: #e6edf3; border: 1px solid #30363d;
+    border-radius: 6px; padding: 4px 8px; font-size: 13px;
+  }
+  #controls button {
+    background: #238636; color: #fff; border: none; border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  #controls button:hover { background: #2ea043; }
+  #tooltip {
+    position: fixed; z-index: 20;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 12px 16px;
+    font-size: 13px; max-width: 320px;
+    pointer-events: none; opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  #tooltip.visible { opacity: 1; }
+  #tooltip h3 { font-size: 14px; margin-bottom: 6px; color: #58a6ff; }
+  #tooltip .channels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  #tooltip .ch-tag {
+    font-size: 11px; padding: 2px 6px; border-radius: 4px;
+    background: #21262d; color: #8b949e;
+  }
+  #tooltip .video-list { margin-top: 8px; font-size: 12px; color: #8b949e; }
+  #legend {
+    position: fixed; bottom: 16px; left: 16px; z-index: 10;
+    background: rgba(22,27,34,0.92); border: 1px solid #30363d;
+    border-radius: 8px; padding: 12px 16px;
+    font-size: 12px;
+  }
+  #legend h4 { margin-bottom: 8px; color: #8b949e; font-size: 11px; text-transform: uppercase; }
+  .legend-item { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  #stats {
+    position: fixed; bottom: 16px; right: 16px; z-index: 10;
+    background: rgba(22,27,34,0.92); border: 1px solid #30363d;
+    border-radius: 8px; padding: 12px 16px;
+    font-size: 12px; color: #8b949e;
+  }
+  svg { display: block; }
+  .link { stroke: #21262d; stroke-opacity: 0.6; }
+  .node circle { cursor: pointer; stroke-width: 1.5; }
+  .node text { fill: #8b949e; font-size: 10px; pointer-events: none; }
+  .node:hover circle { stroke: #fff !important; stroke-width: 2.5; }
+  .node.dimmed circle { opacity: 0.15; }
+  .node.dimmed text { opacity: 0.1; }
+  .link.dimmed { stroke-opacity: 0.05; }
+  .node.highlighted circle { stroke: #fff !important; stroke-width: 2.5; }
+  .link.highlighted { stroke: #58a6ff; stroke-opacity: 0.6; stroke-width: 2; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>Topic Relation Graph</h1>
+  <span class="sep">|</span>
+  <a href="/">← Dashboard</a>
+  <div id="controls">
+    <label>Min connections:
+      <select id="minFreq">
+        <option value="1">1+</option>
+        <option value="2" selected>2+</option>
+        <option value="3">3+</option>
+      </select>
+    </label>
+    <label>Channel:
+      <select id="channelFilter"><option value="all">All Channels</option></select>
+    </label>
+    <button onclick="rebuildGraph()">Apply</button>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<div id="legend"></div>
+<div id="stats"></div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+const CHANNEL_COLORS = {
+  'Andrej Karpathy': '#f97316',
+  '3Blue1Brown': '#3b82f6',
+  'Two Minute Papers': '#22c55e',
+  'Yannic Kilcher': '#a855f7',
+  'AI Explained': '#ef4444',
+  'Fireship': '#f59e0b',
+  'Sam Witteveen': '#6366f1',
+  'The AI Epiphany': '#ec4899',
+  'Wes Roth': '#14b8a6',
+  'Dave Ebbelaar': '#8b5cf6',
+  'All About AI': '#06b6d4',
+  '1littlecoder': '#f43f5e'
+};
+
+let data, svg, simulation, nodeMap;
+let activeNode = null;
+
+async function loadData() {
+  const resp = await fetch('/data.json');
+  data = await resp.json();
+  buildChannelFilter();
+  buildLegend();
+  rebuildGraph();
+}
+
+function buildChannelFilter() {
+  const sel = document.getElementById('channelFilter');
+  const channels = [...new Set(data.videos.map(v => v.channel_name))].sort();
+  channels.forEach(ch => {
+    const opt = document.createElement('option');
+    opt.value = ch; opt.textContent = ch;
+    sel.appendChild(opt);
+  });
+}
+
+function buildLegend() {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '<h4>Channels</h4>';
+  Object.entries(CHANNEL_COLORS).forEach(([ch, color]) => {
+    legend.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${color}"></div>${ch}</div>`;
+  });
+}
+
+function rebuildGraph() {
+  const minFreq = parseInt(document.getElementById('minFreq').value);
+  const channelFilter = document.getElementById('channelFilter').value;
+
+  // Build topic graph
+  const topicVideos = {};
+  const topicChannelSet = {};
+  
+  data.videos.forEach(v => {
+    if (channelFilter !== 'all' && v.channel_name !== channelFilter) return;
+    const topics = v.specific_topics || [];
+    topics.forEach(t => {
+      if (!topicVideos[t]) { topicVideos[t] = []; topicChannelSet[t] = new Set(); }
+      topicVideos[t].push(v);
+      topicChannelSet[t].add(v.channel_name);
+    });
+  });
+
+  // Filter to topics with minFreq+ videos
+  const validTopics = Object.keys(topicVideos).filter(t => topicVideos[t].length >= minFreq);
+
+  // Build nodes
+  const nodes = validTopics.map(t => ({
+    id: t,
+    count: topicVideos[t].length,
+    channels: [...topicChannelSet[t]],
+    primaryChannel: [...topicChannelSet[t]].sort((a,b) => 
+      topicVideos[t].filter(v => v.channel_name === b).length -
+      topicVideos[t].filter(v => v.channel_name === a).length
+    )[0],
+    videos: topicVideos[t]
+  }));
+
+  // Build edges: topics that co-occur in the same video
+  const edgeMap = {};
+  data.videos.forEach(v => {
+    if (channelFilter !== 'all' && v.channel_name !== channelFilter) return;
+    const topics = (v.specific_topics || []).filter(t => validTopics.includes(t));
+    for (let i = 0; i < topics.length; i++) {
+      for (let j = i + 1; j < topics.length; j++) {
+        const key = [topics[i], topics[j]].sort().join('|||');
+        if (!edgeMap[key]) edgeMap[key] = { source: topics[i], target: topics[j], weight: 0 };
+        edgeMap[key].weight++;
+      }
+    }
+  });
+  const links = Object.values(edgeMap);
+
+  nodeMap = {};
+  nodes.forEach(n => nodeMap[n.id] = n);
+
+  const stats = document.getElementById('stats');
+  stats.innerHTML = `${nodes.length} topics · ${links.length} connections`;
+
+  drawGraph(nodes, links);
+}
+
+function drawGraph(nodes, links) {
+  d3.select('svg').remove();
+  
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  svg = d3.select('body').append('svg')
+    .attr('width', width).attr('height', height);
+
+  // Zoom
+  const g = svg.append('g');
+  svg.call(d3.zoom().scaleExtent([0.2, 5]).on('zoom', e => g.attr('transform', e.transform)));
+
+  // Arrow markers
+  // (skip for force graph — too cluttered)
+
+  const radiusScale = d3.scaleSqrt().domain([1, d3.max(nodes, d => d.count) || 1]).range([5, 28]);
+
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(80).strength(l => Math.min(l.weight * 0.1, 0.5)))
+    .force('charge', d3.forceManyBody().strength(-120))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide().radius(d => radiusScale(d.count) + 4));
+
+  const link = g.append('g').selectAll('line')
+    .data(links).join('line')
+    .attr('class', 'link')
+    .attr('stroke-width', d => Math.sqrt(d.weight));
+
+  const node = g.append('g').selectAll('g')
+    .data(nodes).join('g')
+    .attr('class', 'node')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+
+  node.append('circle')
+    .attr('r', d => radiusScale(d.count))
+    .attr('fill', d => CHANNEL_COLORS[d.primaryChannel] || '#8b949e')
+    .attr('stroke', d => d3.color(CHANNEL_COLORS[d.primaryChannel] || '#8b949e').darker(0.5))
+    .on('mouseover', (e, d) => showTooltip(e, d))
+    .on('mouseout', hideTooltip)
+    .on('click', (e, d) => highlightConnections(d, node, link));
+
+  node.append('text')
+    .text(d => d.count >= 2 ? d.id.length > 25 ? d.id.slice(0,22) + '…' : d.id : '')
+    .attr('dy', d => radiusScale(d.count) + 12)
+    .attr('text-anchor', 'middle');
+
+  simulation.on('tick', () => {
+    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+}
+
+function highlightConnections(d, node, link) {
+  if (activeNode === d.id) {
+    // Deselect
+    activeNode = null;
+    node.classed('dimmed', false).classed('highlighted', false);
+    link.classed('dimmed', false).classed('highlighted', false);
+    return;
+  }
+  activeNode = d.id;
+  const connected = new Set();
+  connected.add(d.id);
+  link.each(function(l) {
+    if (l.source.id === d.id || l.target.id === d.id) {
+      connected.add(l.source.id);
+      connected.add(l.target.id);
+    }
+  });
+  node.classed('dimmed', n => !connected.has(n.id)).classed('highlighted', n => n.id === d.id);
+  link.classed('dimmed', l => l.source.id !== d.id && l.target.id !== d.id)
+      .classed('highlighted', l => l.source.id === d.id || l.target.id === d.id);
+}
+
+function showTooltip(event, d) {
+  const tt = document.getElementById('tooltip');
+  const channelTags = d.channels.map(ch => `<span class="ch-tag" style="border-left:3px solid ${CHANNEL_COLORS[ch] || '#8b949e'}">${ch}</span>`).join('');
+  const videoList = d.videos.slice(0, 4).map(v => `<div>• ${v.title.slice(0, 50)}${v.title.length > 50 ? '…' : ''}</div>`).join('');
+  const more = d.videos.length > 4 ? `<div style="color:#58a6ff">+${d.videos.length - 4} more</div>` : '';
+  
+  tt.innerHTML = `<h3>${d.id}</h3>
+    <div style="color:#8b949e">${d.videos.length} video${d.videos.length > 1 ? 's' : ''}</div>
+    <div class="channels">${channelTags}</div>
+    <div class="video-list">${videoList}${more}</div>`;
+  
+  tt.classList.add('visible');
+  const x = Math.min(event.pageX + 12, window.innerWidth - 340);
+  const y = Math.min(event.pageY - 20, window.innerHeight - 200);
+  tt.style.left = x + 'px';
+  tt.style.top = y + 'px';
+}
+
+function hideTooltip() {
+  document.getElementById('tooltip').classList.remove('visible');
+}
+
+window.addEventListener('resize', () => {
+  if (svg) {
+    svg.attr('width', window.innerWidth).attr('height', window.innerHeight);
+    if (simulation) {
+      simulation.force('center', d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2));
+      simulation.alpha(0.3).restart();
+    }
+  }
+});
+
+loadData();
+</script>
+</body>
+</html>
