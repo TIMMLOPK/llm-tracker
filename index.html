@@ -186,6 +186,7 @@
       gap: 16px;
       margin-bottom: 16px;
     }
+    .insights-grid > .glass-card { min-width: 0; overflow: hidden; }
 
     /* --- Topic Cloud --- */
     #topic-cloud-container {
@@ -218,6 +219,7 @@
       border-radius: var(--radius-md);
       gap: 12px;
       transition: background 0.15s;
+      min-width: 0;
     }
 
     .connection-item:hover {
@@ -228,7 +230,10 @@
       font-weight: 600;
       color: var(--text-dark);
       font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
+      min-width: 0;
     }
 
     .connection-channels {
@@ -873,9 +878,8 @@
         </label>
         <span id="topic-graph-stats"></span>
       </div>
-      <div id="topic-graph-container">
-        <div id="graph-tooltip"></div>
-      </div>
+      <div id="topic-graph-container"></div>
+      <div id="graph-tooltip"></div>
     </div>
     <!-- Channels -->
     <div class="section-title"><span>📡</span> Tracked Channels</div>
@@ -1448,36 +1452,37 @@
     let graphActiveNode = null;
 
     function initTopicGraph() {
-      const minFreq = parseInt(document.getElementById('graphMinFreq').value);
       const channelFilter = document.getElementById('graphChannelFilter').value;
 
+      // Build graph from cross-channel connections
+      const connections = (DATA ? DATA.connections : []) || [];
+      const minConn = parseInt(document.getElementById('graphMinFreq').value) || 1;
+
+      // Filter connections by channel if needed
+      const filtered = connections.filter(c => {
+        if (channelFilter === 'all') return true;
+        return (c.videos || []).some(v => v.channel === channelFilter);
+      }).filter(c => (c.channel_count || 0) >= minConn);
+
+      // Build nodes from cluster_topics (or topic label)
       const topicVideos = {};
-      const topicChannelSet = {};
-      (DATA ? DATA.videos : []).forEach(v => {
-        if (channelFilter !== 'all' && v.channel_name !== channelFilter) return;
-        (v.specific_topics || []).forEach(t => {
-          if (!topicVideos[t]) { topicVideos[t] = []; topicChannelSet[t] = new Set(); }
-          topicVideos[t].push(v);
-          topicChannelSet[t].add(v.channel_name);
-        });
-      });
-
-      const validTopics = Object.keys(topicVideos).filter(t => topicVideos[t].length >= minFreq);
-      const nodes = validTopics.map(t => ({
-        id: t,
-        count: topicVideos[t].length,
-        channels: [...topicChannelSet[t]],
-        primaryChannel: [...topicChannelSet[t]].sort((a,b) =>
-          topicVideos[t].filter(v => v.channel_name === b).length -
-          topicVideos[t].filter(v => v.channel_name === a).length
-        )[0],
-        videos: topicVideos[t]
-      }));
-
+      const topicChannels = {};
       const edgeMap = {};
-      (DATA ? DATA.videos : []).forEach(v => {
-        if (channelFilter !== 'all' && v.channel_name !== channelFilter) return;
-        const topics = (v.specific_topics || []).filter(t => validTopics.includes(t));
+
+      // Skip mega-clusters (>12 topics) — too large to visualize
+      filtered.filter(c => (c.cluster_topics || [c.topic]).length <= 12).forEach(c => {
+        const topics = c.cluster_topics || [c.topic];
+        const vids = c.videos || [];
+
+        topics.forEach(t => {
+          if (!topicVideos[t]) { topicVideos[t] = []; topicChannels[t] = new Set(); }
+          vids.forEach(v => {
+            topicVideos[t].push(v);
+            topicChannels[t].add(v.channel);
+          });
+        });
+
+        // Link all topics in the same cluster
         for (let i = 0; i < topics.length; i++) {
           for (let j = i + 1; j < topics.length; j++) {
             const key = [topics[i], topics[j]].sort().join('|||');
@@ -1486,9 +1491,22 @@
           }
         }
       });
+
+      const validTopics = Object.keys(topicVideos);
+      const nodes = validTopics.map(t => ({
+        id: t,
+        count: topicVideos[t].length,
+        channels: [...topicChannels[t]],
+        primaryChannel: [...topicChannels[t]].sort((a,b) =>
+          topicVideos[t].filter(v => v.channel === b).length -
+          topicVideos[t].filter(v => v.channel === a).length
+        )[0],
+        videos: topicVideos[t]
+      }));
+
       const links = Object.values(edgeMap);
 
-      document.getElementById('topic-graph-stats').textContent = nodes.length + ' topics · ' + links.length + ' connections';
+      document.getElementById('topic-graph-stats').textContent = nodes.length + ' topics · ' + links.length + ' links';
       drawTopicGraph(nodes, links);
     }
 

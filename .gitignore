@@ -14,3 +14,8 @@ subs/
 __pycache__/
 *.pyc
 .venv/
+
+
+# Embeddings
+topics.json
+topic_embeddings.json

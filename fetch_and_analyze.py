@@ -10,6 +10,7 @@ import base64
 import math
 import requests
 from datetime import datetime, timezone
+from collections import defaultdict
 from pathlib import Path
 from dotenv import load_dotenv
 import os
@@ -23,14 +24,13 @@ DATA_FILE = WORKDIR / "data.json"
 CHANNELS_FILE = WORKDIR / "channels.json"
 COOKIES_FILE = WORKDIR / "cookies.txt"
 
-# Cloudflare Whisper API
-CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID")
-CF_API_TOKEN = os.getenv("CF_API_TOKEN")
+# Cloudflare API (from environment)
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "")
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN", "")
 CF_WHISPER_URL = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/openai/whisper-large-v3-turbo"
 
-
-# YouTube Data API
-YT_API_KEY = os.getenv("YT_API_KEY")
+# YouTube Data API (from environment)
+YT_API_KEY = os.environ.get("YT_API_KEY", "")
 
 MAX_VIDEOS_PER_CHANNEL = 10
 WHISPER_CHUNK_MINUTES = 20  # Chunk audio for Whisper if > this
@@ -397,11 +397,11 @@ def _get_embeddings(texts, batch_size=50):
     return all_embeddings
 
 
-def find_semantic_connections(videos, embedding_threshold=0.72, jaccard_threshold=0.4):
-    """Find cross-channel connections using embedding similarity with Jaccard fallback.
+def find_semantic_connections(videos, embedding_threshold=0.8, jaccard_threshold=0.4):
+    """Find cross-channel connections using pre-computed embeddings with Jaccard fallback.
 
     Strategy:
-    1. Try Cloudflare Qwen3 embeddings (best quality — captures semantic meaning)
+    1. Load pre-computed embeddings from topic_embeddings.json (generated locally)
     2. Fall back to Jaccard similarity on tokenized topic strings (local, no API)
     3. Always includes exact matches as baseline
 
@@ -421,16 +421,30 @@ def find_semantic_connections(videos, embedding_threshold=0.72, jaccard_threshol
     if len(unique_topics) < 2:
         return find_cross_channel_connections(videos)
 
-    # Try embeddings first, fall back to Jaccard
+    # Try pre-computed embeddings first, fall back to Jaccard
     use_embeddings = False
-    print(f"  [INFO] Computing topic similarity for {len(unique_topics)} unique topics...")
-    embeddings = _get_embeddings(unique_topics)
+    emb_file = WORKDIR / "topic_embeddings.json"
+    precomputed = None
+    if emb_file.exists():
+        try:
+            with open(emb_file) as f:
+                precomputed = json.load(f)
+        except Exception:
+            pass
 
-    if embeddings and len(embeddings) == len(unique_topics):
-        print(f"  [INFO] Using embedding similarity (threshold={embedding_threshold})")
+    # Build embedding lookup: topic_string -> vector
+    emb_lookup = {}
+    if precomputed and "topics" in precomputed and "embeddings" in precomputed:
+        for topic, vec in zip(precomputed["topics"], precomputed["embeddings"]):
+            emb_lookup[topic] = vec
+
+    # Check coverage: how many of our topics have pre-computed embeddings?
+    covered = sum(1 for t in unique_topics if t in emb_lookup)
+    if covered >= len(unique_topics) * 0.8:  # 80%+ coverage
+        print(f"  [INFO] Using pre-computed embeddings ({covered}/{len(unique_topics)} topics covered)")
         use_embeddings = True
     else:
-        print(f"  [INFO] Embeddings unavailable, using Jaccard similarity (threshold={jaccard_threshold})")
+        print(f"  [INFO] Embedding coverage too low ({covered}/{len(unique_topics)}), using Jaccard")
 
     # Stop words to remove for Jaccard (prevents false matches on generic terms)
     STOP_WORDS = frozenset({
@@ -449,7 +463,11 @@ def find_semantic_connections(videos, embedding_threshold=0.72, jaccard_threshol
 
     def similarity(i, j):
         if use_embeddings:
-            return _cosine_similarity(embeddings[i], embeddings[j])
+            ti, tj = unique_topics[i], unique_topics[j]
+            vi, vj = emb_lookup.get(ti), emb_lookup.get(tj)
+            if vi is None or vj is None:
+                return 0.0
+            return _cosine_similarity(vi, vj)
         ti, tj = topic_tokens[unique_topics[i]], topic_tokens[unique_topics[j]]
         if not ti or not tj:
             return 0.0
@@ -484,10 +502,47 @@ def find_semantic_connections(videos, embedding_threshold=0.72, jaccard_threshol
                 union(i, j)
 
     # Collect clusters
-    clusters = {}
+    raw_clusters = {}
     for i in range(len(unique_topics)):
         root = find(i)
-        clusters.setdefault(root, []).append(i)
+        raw_clusters.setdefault(root, []).append(i)
+
+    # Two-pass: split mega-clusters (>12 topics) at higher thresholds
+    MAX_CLUSTER_SIZE = 12
+    clusters = {}
+    cluster_id = 0
+    for root, indices in raw_clusters.items():
+        if len(indices) <= MAX_CLUSTER_SIZE:
+            clusters[cluster_id] = indices
+            cluster_id += 1
+        else:
+            # Re-cluster at progressively higher thresholds
+            for split_threshold in [0.86, 0.88, 0.90, 0.92]:
+                sub_parent = {i: i for i in indices}
+                def sub_find(x):
+                    while sub_parent[x] != x:
+                        sub_parent[x] = sub_parent[sub_parent[x]]
+                        x = sub_parent[x]
+                    return x
+                def sub_union(a, b):
+                    ra, rb = sub_find(a), sub_find(b)
+                    if ra != rb: sub_parent[ra] = rb
+                for ii, i in enumerate(indices):
+                    for j in indices[ii+1:]:
+                        ch_i = set(v["channel"] for v in topic_info[unique_topics[i]])
+                        ch_j = set(v["channel"] for v in topic_info[unique_topics[j]])
+                        if ch_i.intersection(ch_j): continue
+                        if similarity(i, j) >= split_threshold:
+                            sub_union(i, j)
+                sub_clusters = defaultdict(list)
+                for i in indices:
+                    sub_clusters[sub_find(i)].append(i)
+                max_size = max(len(c) for c in sub_clusters.values())
+                for sub_indices in sub_clusters.values():
+                    clusters[cluster_id] = sub_indices
+                    cluster_id += 1
+                if max_size <= MAX_CLUSTER_SIZE:
+                    break
 
     # Build connections from clusters spanning 2+ channels
     connections = []
@@ -524,7 +579,7 @@ def find_semantic_connections(videos, embedding_threshold=0.72, jaccard_threshol
             ec["match_type"] = "exact"
             connections.append(ec)
 
-    return sorted(connections, key=lambda x: x["channel_count"], reverse=True)[:30]
+    return sorted(connections, key=lambda x: x["channel_count"], reverse=True)[:50]
 
 
 def main():

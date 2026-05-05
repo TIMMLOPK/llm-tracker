@@ -79,7 +79,7 @@ The keyword-based layer ensures every video has at least basic topic tags immedi
 
 After enrichment, a connection-building pass identifies topics that appear across multiple channels using a three-tier similarity strategy:
 
-**Tier 1 — Embedding similarity (preferred):** Topic strings are embedded using Cloudflare's Qwen3 embedding model (`@cf/qwen/qwen3-embedding-0.6b`), then clustered via Union-Find with cosine similarity ≥ 0.72. This captures semantic equivalence across different phrasings (e.g., "RLHF training" ≈ "reinforcement learning from human feedback"). Requires Cloudflare API quota.
+**Tier 1 — Embedding similarity (preferred):** Topic strings are embedded locally using Qwen3-Embedding-0.6B (via sentence-transformers on a MacBook), then clustered via Union-Find with cosine similarity ≥ 0.8. This captures semantic equivalence across different phrasings (e.g., "Claude Opus 4.7 review" ≈ "Opus 4.7 applications"). Pre-computed embeddings are stored in `topic_embeddings.json` and loaded by the pipeline — no API calls needed at runtime.
 
 **Tier 2 — Jaccard similarity (fallback):** When embeddings are unavailable (API quota exhausted), topic strings are tokenized with domain-specific stop words removed (model names, generic terms like "AI", "LLM", "new") and clustered using Jaccard similarity ≥ 0.4. This runs entirely locally with no API dependency.
 
@@ -202,18 +202,16 @@ The connection detection was evaluated across three methods:
 |--------|------------|-------------|-------|
 | Exact string matching | 5 | 6/12 | High precision, very low recall |
 | Jaccard similarity (threshold=0.4) | 30 | 11/12 | Good balance, local computation |
-| Embedding similarity (threshold=0.72) | TBD* | TBD* | Best semantic quality |
+| Embedding similarity (threshold=0.8) | 28 | 11/12 | Best semantic quality |
+| Combined (two-pass embedding + exact) | 48 | 11/12 | Production configuration |
 
-*Embedding evaluation pending — Cloudflare's free-tier neuron quota (10k/day) was exhausted by Whisper transcriptions during this evaluation. The embedding approach will be tested when the quota resets.
+Embeddings were generated locally using Qwen3-Embedding-0.6B via sentence-transformers (562 topics, 1024-dim vectors, 4.1 seconds on MacBook Pro). The production configuration uses a two-pass approach: first clusters at threshold 0.80, then splits any mega-clusters (>12 topics) at progressively higher thresholds (0.86–0.92). This produces 48 connections across 11 of 12 channels — a 9.6x improvement over exact matching alone, with no cluster exceeding 10 topics. Example clusters:
 
-The Jaccard approach with stop word removal produces 30 connections across 11 of 12 channels — a 6x improvement over exact matching. Example clusters:
-
-- **"OpenAI model strategy / OpenAI vs Anthropic vs DeepSeek / OpenAI Spud model"** — 4 channels discussing OpenAI's competitive positioning
-- **"GPT-2 architecture reproduction / LLaMA 2 70B architecture / Titans architecture"** — 3 channels covering model architecture deep-dives
-- **"multi-agent ecosystems / multi-user agent infrastructure / multi-agent coordination"** — 3 channels on agentic AI systems
+- **"AI agent building patterns / AI agent building tutorial"** — 6 channels on agentic AI
+- **"LLM training pipeline overview / long-context LLM degradation / LLM training data curation"** — Karpathy, The AI Epiphany, Yannic Kilcher
 - **"Claude Opus 4.7 review / Opus 4.7 applications / Claude Opus 4.7 release"** — 3 channels covering the same model launch
-
-The embedding approach (when available) is expected to further improve quality by capturing semantic equivalence that Jaccard misses — e.g., "KV cache optimization" matching "attention key-value storage improvements" despite sharing no words.
+- **"NVIDIA Lyra 2.0 / NVIDIA Nemotron 3 Nano Omni"** — 4 channels covering NVIDIA's latest models
+- **"Claude Co-work tool / Claude Design agent architecture"** — 3 channels on Anthropic's design tools
 
 ### 4.4 System Reliability
 
@@ -280,7 +278,7 @@ The live dashboard at https://track.ionce.me provides:
 
 4. **Visual content gaps**: 6 videos from 3Blue1Brown have no transcripts because they are purely visual/mathematical with music — no speech to transcribe. These represent an inherent limitation of audio-based transcription for visual content.
 
-5. **Embedding evaluation incomplete**: The Cloudflare embedding approach (Qwen3) was implemented but could not be fully evaluated due to free-tier neuron quota exhaustion during transcription. The Jaccard fallback (30 connections) is a significant improvement over exact matching (5 connections), but embedding-based similarity is expected to produce even better results by capturing semantic equivalence across different phrasings. This evaluation should be completed when the quota resets.
+5. **Embedding regeneration requires local setup**: Topic embeddings are generated locally using sentence-transformers (Qwen3-Embedding-0.6B) on a MacBook, then uploaded to the server. When new videos are added by the cron job, new topic strings won't have pre-computed embeddings until the next local run. The pipeline falls back to Jaccard similarity for uncovered topics, which still produces reasonable results. A production system would run embedding generation server-side.
 
 6. **No sentiment analysis**: The system captures what creators say but not how strongly they feel. Adding sentiment intensity scoring would help identify controversial or consensus topics.
 

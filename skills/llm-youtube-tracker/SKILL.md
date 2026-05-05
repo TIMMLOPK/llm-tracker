@@ -75,6 +75,16 @@ for v in new[:5]:
 PYEOF
 ```
 
+### Step 2.5: Regenerate Topic Embeddings (periodic, manual)
+When new videos are added, their `specific_topics` won't have pre-computed embeddings. To regenerate:
+```bash
+# On MacBook:
+scp ec2-user@54.165.122.89:~/llm-tracker/topics.json ~/topics.json
+python3 embed_topics.py
+scp ~/topic_embeddings.json ec2-user@54.165.122.89:~/llm-tracker/
+```
+The pipeline falls back to Jaccard similarity for uncovered topics until embeddings are refreshed.
+
 **CRITICAL: Hermes analyzes transcripts DIRECTLY — do NOT delegate to subagents.** Subagents consistently time out on transcript data (3x timeout in this session). Instead, follow the pattern in `references/batch-enrichment-pattern.md`:
 
 1. Use `terminal` to read transcript excerpts in batches (10-20 videos at a time, ~500-1000 char excerpts each)
@@ -111,20 +121,33 @@ for v in d['videos']:
 ```
 
 ### Step 3: Rebuild Cross-Channel Connections
-After enrichment, rebuild connections using the precise `specific_topics` field:
+After enrichment, rebuild connections by running `find_semantic_connections()` from `fetch_and_analyze.py`. This uses a 3-tier approach:
+
 ```python
-from collections import defaultdict
-topic_videos = defaultdict(list)
-for v in d['videos']:
-    for topic in v.get('specific_topics', []):
-        topic_videos[topic].append({'id': v['id'], 'title': v['title'], 'channel': v['channel_name']})
-connections = []
-for topic, vids in topic_videos.items():
-    channels = set(v['channel'] for v in vids)
-    if len(channels) >= 2:
-        connections.append({'topic': topic, 'videos': vids[:6], 'channel_count': len(channels)})
-connections.sort(key=lambda x: x['channel_count'], reverse=True)
-d['connections'] = connections[:30]
+# In fetch_and_analyze.py — called from main():
+connections = find_semantic_connections(all_videos)
+```
+
+**Tier 1 — Embedding similarity (preferred, needs CF quota):** Embeds topic strings via `@cf/qwen/qwen3-embedding-0.6b`, clusters with Union-Find at cosine similarity ≥ 0.72. Best semantic quality.
+
+**Tier 2 — Jaccard similarity (local fallback):** Tokenizes topics, removes domain stop words (`STOP_WORDS` set — "ai", "model", "gpt", "claude", etc.), clusters at Jaccard ≥ 0.4. No API needed. Produces ~30 connections across 11/12 channels.
+
+**Tier 3 — Exact matching (baseline):** Always runs as safety net via `find_cross_channel_connections()`.
+
+Each connection is tagged with `match_type` (`embedding` / `jaccard` / `exact`).
+
+**Key pitfall:** Without the stop word list, Jaccard produces false positives from generic terms ("AI", "model"). The `STOP_WORDS` frozenset in the code is tuned for the LLM domain — don't remove it.
+
+To rebuild manually (e.g., after agent enrichment):
+```python
+import json, sys
+sys.path.insert(0, '/home/ec2-user/llm-tracker')
+from fetch_and_analyze import find_semantic_connections
+with open('/home/ec2-user/llm-tracker/data.json') as f:
+    data = json.load(f)
+data['connections'] = find_semantic_connections(data['videos'])
+with open('/home/ec2-user/llm-tracker/data.json', 'w') as f:
+    json.dump(data, f, indent=2, default=str)
 ```
 
 ### Step 4: Restart Server
@@ -173,6 +196,40 @@ resp = requests.post(url, headers=headers, json={"audio": audio_b64, "language":
 | All About AI | UCR9j1jqqB5Rse69wjUnbYwA |
 | 1littlecoder | UCpV_X0VrL8-jg3t6wYGS-1g |
 
+## Architecture Integrity (IMPORTANT)
+
+The pipeline has a **two-layer enrichment architecture** — do NOT conflate them:
+
+1. **Layer 1 (code — automated):** `fetch_and_analyze.py` runs `extract_topics_and_claims()` — keyword-based topic matching against 20 predefined categories + claim sentence extraction. This produces `topics` and `claims` fields. Runs automatically during every pipeline cycle.
+
+2. **Layer 2 (agent — during cron runs):** The Hermes agent reads transcript excerpts (~500-1000 chars) and applies LLM reasoning to produce `summary`, `specific_topics`, `key_insights`, `creator_stance`, `technical_level`, `notable_quotes`. These are written back to `data.json` with `analysis_quality: "llm_enriched"`.
+
+**Do NOT add LLM API calls to `fetch_and_analyze.py`** unless the user explicitly asks. The agent-driven enrichment is the intended architecture — the agent reasons about transcripts more effectively than a single API call, can build cross-video connections, and avoids JSON fragility.
+
+## Credentials
+
+Credentials are loaded from `~/llm-tracker/.env` at startup (auto-loaded by `fetch_and_analyze.py`, no python-dotenv needed). Required vars: `CF_ACCOUNT_ID`, `CF_API_TOKEN`, `YT_API_KEY`. A `.env.example` file documents the required keys. `.env` is in `.gitignore`.
+
+## Enrichment Architecture (Two-Layer)
+
+The tracker uses a **two-layer enrichment** approach — this is critical to understand for accuracy:
+
+**Layer 1 — Automated (in code):** `fetch_and_analyze.py` has `extract_topics_and_claims()`, a keyword-based function scanning for 20 predefined topic categories. This runs automatically and produces `topics` and `claims` fields.
+
+**Layer 2 — Agent-driven (LLM):** During cron runs, the Hermes agent reads transcript excerpts and applies LLM reasoning to produce: `summary`, `specific_topics`, `key_insights`, `creator_stance`, `technical_level`, `notable_quotes`. The agent writes these back to `data.json` with `analysis_quality: 'llm_enriched'`.
+
+## Cross-Channel Connection Detection (Three-Tier)
+
+`find_semantic_connections()` in `fetch_and_analyze.py` uses a three-tier strategy:
+
+1. **Embedding similarity (preferred):** CF Qwen3 embeddings + cosine similarity ≥ 0.72 via Union-Find clustering. Best quality — captures semantic equivalence across phrasings.
+2. **Jaccard similarity (fallback):** Tokenized topic strings with domain stop words removed, Jaccard ≥ 0.4. Local, no API needed. Stop words include model names and generic terms (ai, llm, model, gpt, claude, etc.).
+3. **Exact string matching (baseline):** Safety net for identical topic strings.
+
+Results: exact=5 connections/6ch → jaccard=30 connections/11ch → embeddings=TBD (pending CF quota).
+
+Each connection tagged with `match_type` (`embedding`/`jaccard`/`exact`) for transparency.
+
 ## Pitfalls
 
 1. **yt-dlp n-challenge:** MUST use `--js-runtime node` flag. Without it, only storyboard images available. This is specific to this AWS instance — the JS runtime detection fails despite node being installed at `/home/ec2-user/.local/bin/node`.
@@ -184,10 +241,15 @@ resp = requests.post(url, headers=headers, json={"audio": audio_b64, "language":
 7. **data.json structure & size:** ~16MB for 120 videos with full timestamped segments. Structure is `{'videos': [...], 'connections': [...], 'last_update': '...', 'channel_count': N, 'video_count': N}` — NOT a bare list. Always load with `data = json.load(f)` then access `data['videos']`. **NEVER** read via `read_file` tool — it returns empty for files this large. Always use `terminal` with python3 to read/modify data.json. Pipeline now stores `transcript_segments` as array of `{start, end, text}` (not just count).
 8. **Audio cleanup:** After Whisper transcription, delete audio files to save disk (only 15GB total). Use `find audio/ -name "*.mp3" -delete` (not `rm audio/*.mp3` which can timeout on large directories).
 9. **execute_code JSON parsing:** `read_file` from hermes_tools returns empty content for large files. The `execute_code` tool also can't read data.json directly. Always use `terminal` with `python3 << 'PYEOF'` heredoc pattern for data.json operations.
-10. **Specific topics > generic keywords:** LLM-enriched `specific_topics` produce fewer but far more meaningful cross-channel connections than keyword-based topics. 5 real connections > 20 noise connections.
-11. **Port 80 redirect verification:** Always verify both `localhost:80` and the external IP after restarting. The redirect proxy and serve.py are separate processes — both must be running.
-12. **Cloudflare Whisper rate limit:** Free tier = 10,000 neurons/day. Each transcription consumes neurons proportional to audio length. For 120 videos, expect to hit the limit after ~30-40 videos. If you get HTTP 429 with "used up your daily free allocation", stop and retry tomorrow. Don't waste API calls on videos that already have subtitles — only use Whisper for the ~5% without subtitles.
-13. **3Blue1Brown videos:** Many are math/visual-heavy with music — Cloudflare Whisper returns 0 segments for these. Don't waste API quota retrying them. Mark as "No transcript available" and move on.
+10. **Connection detection — use semantic matching, not exact:** Exact string matching on `specific_topics` produces only ~5 connections across 6/12 channels — too few. `find_semantic_connections()` in `fetch_and_analyze.py` uses a 3-tier approach: CF embeddings (best) → Jaccard with stop words (fallback) → exact (baseline). Jaccard with stop word removal produces ~30 connections across 11/12 channels. When rebuilding connections manually, always call `find_semantic_connections()`, not the old `find_cross_channel_connections()`.
+
+11. **CF neuron quota is SHARED across ALL models:** Whisper transcriptions, LLM calls, and embedding calls all consume from the same 10,000 neurons/day free tier. Transcribing 120 videos can exhaust the quota, leaving nothing for embeddings or LLM enrichment. Strategy: (a) only use Whisper for videos WITHOUT subtitles (~5%), (b) run embeddings/LLM enrichment on a different day than bulk transcription, (c) the Jaccard fallback works offline when quota is exhausted.
+12. **Port 80 redirect verification:** Always verify both `localhost:80` and the external IP after restarting. The redirect proxy and serve.py are separate processes — both must be running.
+12. **Cloudflare neuron quota is SHARED across ALL models:** The 10,000 neurons/day free tier is shared across Whisper, LLM, and embedding endpoints. A heavy transcription day (e.g., 120 videos) will exhaust the quota for ALL models. Plan accordingly — don't expect embeddings or LLM calls to work after a transcription run. **New API tokens don't help** — the limit is per-account, not per-token. Check dashboard for actual usage before assuming quota is available.
+13. **CF quota reset timing may not be UTC midnight:** The dashboard may show 0/10k usage while the API still returns 429. The reset might be on a rolling 24h window. Don't assume quota is available just because the dashboard shows fresh allocation.
+14. **Credentials must be in `.env`, never in code:** `fetch_and_analyze.py` loads from `.env` via `os.environ.get()`. Required vars: `CF_ACCOUNT_ID`, `CF_API_TOKEN`, `YT_API_KEY`. A `.env.example` documents the required vars. `.gitignore` excludes `.env`. **Never commit API tokens to the repo.**
+16. **Embedding evaluation is resource-constrained:** Embedding-based connections (CF Qwen3) produce the best results but consume from the shared neuron quota. If quota is exhausted, the system falls back to Jaccard similarity automatically. Document which method was used in the evaluation results.
+17. **3Blue1Brown videos:** Many are math/visual-heavy with music — Cloudflare Whisper returns 0 segments for these. Don't waste API quota retrying them. Mark as "No transcript available" and move on.
 14. **Dashboard HTML field mapping:** The dashboard HTML uses `v.topics` and `v.claims` by default. After LLM enrichment, the HTML MUST be updated to use `specific_topics`, `key_insights`, `summary`, `creator_stance`, `notable_quotes`. See `references/dashboard-html-patterns.md` for the full update pattern.
 15. **EC2 architecture is ARM64:** This instance runs `aarch64`, not `x86-64`. Any binary downloads (Caddy, etc.) must use `arch=arm64`. Using the wrong arch gives "Exec format error".
 16. **`--flat-playlist` returns FAKE dates:** yt-dlp's `--flat-playlist` mode returns today's date (YYYYMMDD) as `upload_date` for all videos — NOT the actual publish date. The `published` field in data.json will be wrong (all identical). To get real dates: run `yt-dlp -j --no-download <url>` for each video individually and read `upload_date`. The YouTube Data API key (`AIzaSy...`) is EXPIRED/INVALID (returns 400 "API key not valid"). Don't waste time trying it.
