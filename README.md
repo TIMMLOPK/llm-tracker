@@ -73,6 +73,12 @@ Use `start.sh` to restart the server:
 │  (discover   │    │  Whisper API     │    │  (LLM analyze &  │    │  (serve.py   │
 │   + subs)    │    │  (fallback       │    │   enrich)        │    │   + Caddy)   │
 └─────────────┘    └──────────────────┘    └──────────────────┘    └──────────────┘
+                                                    │
+                                           ┌────────▼─────────┐
+                                           │  Qwen3-Embedding  │
+                                           │  (semantic topic  │
+                                           │   similarity)     │
+                                           └──────────────────┘
 ```
 
 | File | Purpose |
@@ -81,11 +87,13 @@ Use `start.sh` to restart the server:
 | `serve.py` | HTTP server serving the dashboard on port 8080 |
 | `index.html` | Self-contained dashboard UI (D3.js word cloud, topic graph, filters, transcript viewer) |
 | `graph.html` | Legacy standalone topic graph (now embedded in index.html) |
-| `data.json` | All video data, enrichments, and transcripts (~16MB, auto-updated) |
+| `embed_topics.py` | Generates topic embeddings using Qwen3-Embedding-0.6B for semantic similarity matching |
+| `data.json` | All video data, enrichments, and transcripts (~12MB, auto-updated, 122 videos) |
 | `channels.json` | 12 channel configurations with IDs and focus areas |
+| `topics.json` | 562 specific subtopics extracted by the Hermes agent |
+| `topic_embeddings.json` | Pre-computed 1024-dim embeddings for semantic topic similarity |
 | `Caddyfile` | Caddy reverse proxy config for HTTPS |
 | `start.sh` | Server restart helper |
-| `subs/` | Cached SRT subtitle files |
 
 ## Topic Categories
 
@@ -93,7 +101,7 @@ The keyword-based layer in `fetch_and_analyze.py` classifies videos into 20 cate
 
 GPT, LLaMA, Claude, Gemini, Mistral, Fine-tuning, RAG, Agents, Reasoning, Multimodal, Open Source, Safety, Scaling, Training, Inference, Prompting, Code, Benchmark, Transformer, Diffusion
 
-The Hermes agent layer produces 562+ specific subtopics (e.g., "BPE tokenization", "agentic RAG pipelines", "KV cache optimization") on top of these broad categories.
+The Hermes agent layer produces 562 specific subtopics (e.g., "BPE tokenization", "agentic RAG pipelines", "KV cache optimization") on top of these broad categories. These subtopics are embedded with [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) (1024-dim vectors) via `embed_topics.py` to enable semantic similarity matching for cross-channel topic connections.
 
 ## Auto-Updates
 
@@ -136,3 +144,16 @@ See `.env.example` for required configuration:
 ## Hermes Agent
 
 The LLM enrichment layer is powered by [Hermes](https://github.com/NousResearch/hermes-agent), an open-source, self-improving AI agent developed by Nous Research that runs 24/7 on the server. During each cron cycle, Hermes reads transcript excerpts, generates structured enrichment (summaries, specific topics, key insights, creator stance, technical level, notable quotes), and writes the results back to `data.json`.
+
+## Embedding Similarity
+
+The topic similarity system uses pre-computed embeddings to find semantically related topics across channels:
+
+```bash
+# Generate embeddings locally (requires GPU recommended)
+pip install sentence-transformers
+python3 embed_topics.py
+# Upload the resulting topic_embeddings.json to the server
+```
+
+The pipeline embeds all 562 subtopics with Qwen3-Embedding-0.6B (1024 dimensions) and stores the vectors in `topic_embeddings.json`. The dashboard uses cosine similarity on these vectors to power cross-channel topic connection discovery.
