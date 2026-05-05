@@ -127,11 +127,19 @@ let data, svg, simulation, nodeMap;
 let activeNode = null;
 
 async function loadData() {
-  const resp = await fetch('/data.json');
-  data = await resp.json();
-  buildChannelFilter();
-  buildLegend();
-  rebuildGraph();
+  const loading = document.getElementById('stats');
+  loading.innerHTML = 'Loading data…';
+  try {
+    const resp = await fetch('/data.json');
+    if (!resp.ok) throw new Error(`Failed to load data (${resp.status})`);
+    data = await resp.json();
+    buildChannelFilter();
+    buildLegend();
+    rebuildGraph();
+  } catch (err) {
+    loading.innerHTML = `Error: ${err.message}. Make sure to run <code>python3 serve.py</code> first.`;
+    console.error(err);
+  }
 }
 
 function buildChannelFilter() {
@@ -226,6 +234,12 @@ function drawGraph(nodes, links) {
   // (skip for force graph — too cluttered)
 
   const radiusScale = d3.scaleSqrt().domain([1, d3.max(nodes, d => d.count) || 1]).range([5, 28]);
+
+  // Start nodes near center so they're visible immediately
+  nodes.forEach(d => {
+    d.x = width / 2 + (Math.random() - 0.5) * 200;
+    d.y = height / 2 + (Math.random() - 0.5) * 200;
+  });
 
   simulation = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(links).id(d => d.id).distance(80).strength(l => Math.min(l.weight * 0.1, 0.5)))
